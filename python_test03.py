@@ -117,10 +117,10 @@ def run_process(command):
 if __name__ == "__main__":
     logger.warning("Hello, my konfu is the best! :P")
 
-    # Yeah, argparse here. have no time sorry :(
-
-    parser = argparse.ArgumentParser(description="""Run user-selected command
-on many servers via ssh in parallel, collect output from all nodes.""")
+    parser = argparse.ArgumentParser(description="""Detect local mounted disk
+(make sure it is local) with at least X MB free space, create Z files of size Y,
+run Z "dd" processes which where each process will fill selected file with Data 
+and print time took to complete the work.""")
     parser.add_argument('--count', help='How many files',
                        required=True, type=int)
     parser.add_argument('--size', help='Files size',
