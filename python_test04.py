@@ -57,28 +57,51 @@ __license__ = "CC0"
 logger = logging.getLogger('spam_application')
 logger.setLevel(logging.DEBUG)
 
+class Singleton(type):
+    """
+    Singleton class
+    """
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class RCHandler(object):
+    """
+    ReturnCode handler
+    """
+    __metaclass__ = Singleton
+
+    def __init__(self):
+        self.rc__ = 0
+
+    def addRC(self, rc):
+        self.rc__ += rc
+
+    def getRC(self):
+        return self.rc__
+
+rc_handler = RCHandler()
 
 # ok. let's define some custom exceptions
 class ValidationError(Exception):
     def __init__(self, message):
         super(ValidationError, self).__init__(message)
 
-class Foo(object):
-    """
-    Just placeholder
-    """
-    pass
+thread_fault = False
 
-def worker(addr, command, q):
+def worker():
     """
     Simple worker function.
 
-    addr: host to run. Str.
-    command: command to run. Str.
-    q: queue reference
     """
-    q.put(run_process(addr, command))
-    q.task_done()
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        run_process(item['addr'], item['command'])
+        q.task_done()
 
 def die(message):
     """
@@ -113,27 +136,21 @@ def run_process(addr, command):
 
     command: Command str. This one will be split using shlex.
     """
-    ret = {
-            'host': addr,
-            'command': command,
-            'stdout': None,
-            'stderr': None,
-            'returncode': None}
-
     try:
         args = shlex.split("ssh %s %s" % (addr, command))
         with subprocess.Popen(args,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT) as proc:
+                              stdout=subprocess.PIPE) as proc:
             proc.wait()
-            ret['stdout'] = proc.stdout.read().decode("utf-8")
-            # stderr=subprocess.STDOUT so stdout and stderr will be combined
-            #ret['stderr'] = proc.stderr.read().decode("utf-8")
-            ret['returncode'] = proc.returncode
+            stdout = proc.stdout.read().decode("utf-8")
+            rc_handler.addRC(proc.returncode)
+            if proc.returncode != 0:
+                logger.error('Command %s on host %s failed' % (command, addr))
+            else:
+                for line in stdout.splitlines():
+                    print("%s: %s" % (addr, line))
+
     except Exception as exp:
-        ret['stderr'] = str(exp)
-        ret['returncode'] = 255
-    return ret
+        logger.error('Command %s on host %s failed: %s' % str(exp))
 
 if __name__ == "__main__":
     logger.warning("Hello, my konfu is the best! :P")
@@ -149,7 +166,8 @@ on many servers via ssh in parallel, collect output from all nodes.""")
     ns = parser.parse_args()
     command = ns.command
     addrs = ns.addr
-    yaml = False
+    # probable can be a param
+    workers_count = 4
 
     try:
         validate_command(command)
@@ -158,28 +176,25 @@ on many servers via ssh in parallel, collect output from all nodes.""")
 
         q = queue.Queue()
         threads = []
-        for addr in addrs:
-            t = threading.Thread(target=worker, args=(addr, command, q))
+        for i in range(workers_count):
+            t = threading.Thread(target=worker)
             t.start()
             threads.append(t)
 
+        for addr in addrs:
+            item = {'addr': addr, 'command': command}
+            q.put(item)
+
         q.join()
 
-        for item in addrs:
-            if yaml:
-                # in case if I would like to output in yaml :)
-                pass
-            else:
-                result = q.get()
-                for message in result['stdout'].splitlines():
-                    # write to stdout
-                    print("%s: %s" % (result['host'], message))
+        for i in range(workers_count):
+            q.put(None)
 
-        # stop workers
         for t in threads:
             t.join()
+
     except ValidationError as exp:
         die(exp)
 
-    sys.exit(0)
+    sys.exit(rc_handler.getRC())
 
