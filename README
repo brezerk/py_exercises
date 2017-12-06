@@ -1,0 +1,21 @@
+
+Just some tests created by Oleksii.Malakhov
+This is licensed under the terms of CC0
+
+Requrements
+*************************************
+
+ * Python >=3.4
+ * virtualenv
+
+Install
+*************************************
+ make dev
+
+Run
+*************************************
+
+ # source .venv/bin/activate
+ # python test_<number>.py
+
+
