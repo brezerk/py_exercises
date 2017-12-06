@@ -50,6 +50,8 @@ import subprocess
 import argparse
 import logging
 from datetime import datetime
+import psutil
+
 
 __author__ = "Oleksii S. Malakhov <brezerk@brezblock.org.ua>"
 __license__ = "CC0"
@@ -58,17 +60,37 @@ __license__ = "CC0"
 logger = logging.getLogger('spam_application')
 logger.setLevel(logging.DEBUG)
 
+class Singleton(type):
+    """
+    Singleton class
+    """
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class RCHandler(object):
+    """
+    ReturnCode handler
+    """
+    __metaclass__ = Singleton
+
+    def __init__(self):
+        self.rc__ = 0
+
+    def addRC(self, rc):
+        self.rc__ += rc
+
+    def getRC(self):
+        return self.rc__
+
+rc_handler = RCHandler()
 
 # ok. let's define some custom exceptions
 class ValidationError(Exception):
     def __init__(self, message):
         super(ValidationError, self).__init__(message)
-
-class Foo(object):
-    """
-    Just placeholder
-    """
-    pass
 
 def worker(command, q):
     """
@@ -93,26 +115,22 @@ def run_process(command):
 
     command: Command str. This one will be split using shlex.
     """
-    ret = {
-            'command': command,
-            'stdout': None,
-            'stderr': None,
-            'returncode': None}
-
     try:
         args = shlex.split(command)
         with subprocess.Popen(args,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT) as proc:
+                              stdout=subprocess.PIPE) as proc:
             proc.wait()
-            ret['stdout'] = proc.stdout.read().decode("utf-8")
-            # stderr=subprocess.STDOUT so stdout and stderr will be combined
-            #ret['stderr'] = proc.stderr.read().decode("utf-8")
-            ret['returncode'] = proc.returncode
+            stdout = proc.stdout.read().decode("utf-8")
+            rc_handler.addRC(proc.returncode)
+            if proc.returncode != 0:
+                logger.error('Command %s failed' % command)
+                die("Command failed: %s" % command)
+
     except Exception as exp:
-        ret['stderr'] = str(exp)
-        ret['returncode'] = 255
-    return ret
+        logger.error('Command %s failed: %s' % (command, str(exp)))
+        die('Command %s failed: %s' % (command, str(exp)))
+
+    return stdout
 
 if __name__ == "__main__":
     logger.warning("Hello, my konfu is the best! :P")
@@ -134,34 +152,30 @@ and print time took to complete the work.""")
     X_free = ns.free
 
     try:
-        local_disks = run_process('df -l --output=size,target')
+        for disk in psutil.disk_partitions(all=False):
+            if psutil.disk_usage(disk.mountpoint).free >= X_free:
+                logger.warning("Oprating on mount point: %s" % disk.mountpoint)
+                startTime = datetime.now()
+                q = queue.Queue()
+                threads = []
+                for fine_no in range(Z_files_num):
+                    command = "dd if=/dev/zero of=%s/file.%s bs=%s count=1" % (disk.mountpoint, fine_no, Y_size)
+                    logger.warning(command)
+                    t = threading.Thread(target=worker, args=(command, q))
+                    t.start()
+                    threads.append(t)
+                q.join()
 
-        for line in local_disks['stdout'].splitlines():
-            try:
-                size, mount_point = line.split(' /')
-                # this should be moved into separate function :)
-                if int(size) >= X_free:
-                    logger.warning("Oprating on mount point: %s" % mount_point)
-                    startTime = datetime.now()
-                    q = queue.Queue()
-                    threads = []
-                    for fine_no in range(Z_files_num):
-                        command = "dd if=/dev/zero of=/%s/file.%s bs=%s count=1" % (mount_point, fine_no, Y_size)
-                        logger.warning(command)
-                        t = threading.Thread(target=worker, args=(command, q))
-                        t.start()
-                        threads.append(t)
-                    q.join()
-
-                    for t in threads:
-                        t.join()
-                    logger.warning("Toook: %s" % (datetime.now() - startTime))
-            except ValueError:
-                pass
+                for t in threads:
+                    t.join()
+                logger.warning("Toook: %s" % (datetime.now() - startTime))
+                break
+    except ValueError:
+        pass
 
 
     except ValidationError as exp:
         die(exp)
 
-    sys.exit(0)
+    sys.exit(rc_handler.getRC())
 
